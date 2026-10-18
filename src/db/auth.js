@@ -1,14 +1,16 @@
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 export const REGISTER_ENDPOINT = '/api/auth/register';
 export const LOGIN_ENDPOINT = '/api/auth/login';
+export const CHANGE_PIN_ENDPOINT = '/api/auth/change-pin';
 
 const REGISTER_SQL = 'SELECT solar_app.fn_create_pin_user($1::jsonb) AS response';
 const LOGIN_SQL = 'SELECT solar_app.fn_create_pin_session($1::jsonb) AS response';
+const CHANGE_PIN_SQL = 'SELECT solar_app.fn_update_user_pin($1::jsonb) AS response';
 
 const PIN_PATTERN = /^[0-9]{4}$/;
 const COUNTRY_ID_PATTERN = /^[0-9]{1,18}$/;
-const ALLOWED_CODES = new Set([200, 400, 401, 409, 500]);
+const ALLOWED_CODES = new Set([200, 400, 401, 403, 409, 500]);
 
 function cleanObject(body) {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
@@ -70,6 +72,37 @@ export function validateRegisterRequest(body) {
   };
 }
 
+export function validateChangePinRequest(body) {
+  const record = cleanObject(body);
+  if (!record) {
+    return { ok: false, message: 'Request body must be a JSON object' };
+  }
+  const oldPin = readNamedPin(record, 'old_pin');
+  if (!oldPin.ok) return oldPin;
+  const newPin = readNamedPin(record, 'new_pin');
+  if (!newPin.ok) return newPin;
+  const confirmPin = readNamedPin(record, 'confirm_pin');
+  if (!confirmPin.ok) return confirmPin;
+  if (newPin.pin !== confirmPin.pin) {
+    return { ok: false, message: 'PIN entries do not match' };
+  }
+  return {
+    ok: true,
+    request: {
+      oldPin: oldPin.pin,
+      newPin: newPin.pin,
+      confirmPin: confirmPin.pin,
+    },
+  };
+}
+
+function readNamedPin(body, field) {
+  if (typeof body[field] !== 'string' || !PIN_PATTERN.test(body[field])) {
+    return { ok: false, message: 'PIN must be 4 digits' };
+  }
+  return { ok: true, pin: body[field] };
+}
+
 export function validateLoginRequest(body) {
   const record = cleanObject(body);
   if (!record) {
@@ -115,6 +148,42 @@ export function createSessionToken(userId, sessionId, secret) {
 
 export function hashSessionToken(token) {
   return createHash('sha256').update(token).digest('hex');
+}
+
+function decodeTokenPart(segment) {
+  try {
+    return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+export function readBearerToken(authorization) {
+  if (typeof authorization !== 'string') return null;
+  const match = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/.exec(authorization);
+  return match ? match[1] : null;
+}
+
+export function verifySessionToken(token, secret, now = Date.now()) {
+  if (typeof token !== 'string' || typeof secret !== 'string' || secret.length < 32) {
+    return null;
+  }
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const header = decodeTokenPart(parts[0]);
+  const claims = decodeTokenPart(parts[1]);
+  if (!header || header.alg !== 'HS256' || header.typ !== 'JWT') return null;
+  if (!claims || typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) return null;
+  if (claims.exp * 1000 <= now) return null;
+
+  const expected = createHmac('sha256', secret)
+    .update(`${parts[0]}.${parts[1]}`)
+    .digest('base64url');
+  const actualBuffer = Buffer.from(parts[2]);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length) return null;
+  if (!timingSafeEqual(actualBuffer, expectedBuffer)) return null;
+  return hashSessionToken(token);
 }
 
 function placeholderTokenHash() {
@@ -223,4 +292,14 @@ export async function loginWithPin(query, request, secret) {
       access_token: accessToken,
     },
   };
+}
+
+export async function changeUserPin(query, request, tokenHash) {
+  return callFunction(query, CHANGE_PIN_SQL, {
+    api_endpoint: CHANGE_PIN_ENDPOINT,
+    jwt_token_hash: tokenHash,
+    old_pin: request.oldPin,
+    new_pin: request.newPin,
+    confirm_pin: request.confirmPin,
+  });
 }

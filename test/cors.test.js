@@ -63,6 +63,20 @@ describe('local Flutter Web CORS', () => {
     assert.match(response.headers['access-control-allow-methods'], /\bPOST\b/);
     assert.match(response.headers['access-control-allow-methods'], /\bOPTIONS\b/);
     assert.match(response.headers['access-control-allow-headers'], /content-type/i);
+    assert.match(response.headers['access-control-allow-headers'], /accept/i);
     assert.equal(response.headers['access-control-allow-origin'].includes('*'), false);
+  });
+
+  it('allows the Flutter web origin on 127.0.0.1', async () => {
+    const response = await request(createTestApp())
+      .options('/api/dropdowns')
+      .set('Origin', 'http://127.0.0.1:8090')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'content-type,accept');
+
+    assert.equal(response.status, 204);
+    assert.equal(response.headers['access-control-allow-origin'], 'http://127.0.0.1:8090');
+    assert.match(response.headers['access-control-allow-methods'], /\bGET\b/);
+    assert.match(response.headers['access-control-allow-headers'], /accept/i);
   });
 });

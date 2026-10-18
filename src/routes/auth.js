@@ -1,14 +1,19 @@
 import { Router } from 'express';
 import {
+  CHANGE_PIN_ENDPOINT,
   LOGIN_ENDPOINT,
   REGISTER_ENDPOINT,
   auditAuthPayload,
   auditAuthResponse,
+  changeUserPin,
   loginWithPin,
+  readBearerToken,
   readJwtSecret,
   registerPinUser,
+  validateChangePinRequest,
   validateLoginRequest,
   validateRegisterRequest,
+  verifySessionToken,
 } from '../db/auth.js';
 
 const AUDIT_SQL = `
@@ -69,6 +74,20 @@ function createHandler({ query, endpoint, validate, execute }) {
         outcome = failure(400, validation.message);
       } else if (endpoint === LOGIN_ENDPOINT && !readJwtSecret()) {
         outcome = failure(500, 'Sign-in could not be completed');
+      } else if (endpoint === CHANGE_PIN_ENDPOINT && !readJwtSecret()) {
+        outcome = failure(500, 'PIN could not be updated');
+      } else if (endpoint === CHANGE_PIN_ENDPOINT) {
+        const tokenHash = verifySessionToken(readBearerToken(req.get('authorization')), readJwtSecret());
+        if (!tokenHash) {
+          outcome = failure(401, 'Authentication is required');
+        } else {
+          const functionResponse = await execute(query, validation.request, tokenHash);
+          if (!functionResponse) {
+            outcome = failure(500, 'Request could not be completed');
+          } else {
+            outcome = { httpStatus: functionResponse.code, response: functionResponse };
+          }
+        }
       } else {
         const functionResponse = await execute(query, validation.request);
         if (!functionResponse) {
@@ -105,6 +124,12 @@ export function createAuthRouter({ query }) {
     endpoint: LOGIN_ENDPOINT,
     validate: validateLoginRequest,
     execute: (database, request) => loginWithPin(database, request, readJwtSecret()),
+  }));
+  router.post('/change-pin', createHandler({
+    query,
+    endpoint: CHANGE_PIN_ENDPOINT,
+    validate: validateChangePinRequest,
+    execute: (database, request, tokenHash) => changeUserPin(database, request, tokenHash),
   }));
   return router;
 }

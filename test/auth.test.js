@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
+import { createSessionToken, hashSessionToken } from '../src/db/auth.js';
 
 const TEST_SECRET = 'test-secret-at-least-32-characters-long';
 
@@ -170,5 +171,136 @@ describe('POST /api/auth/register', () => {
     assert.equal(response.status, 400);
     assert.equal(response.body.message, 'Enter your name');
     assert.equal(calls.some((call) => call.text.includes('fn_create_pin_user')), false);
+  });
+});
+
+describe('POST /api/auth/change-pin', () => {
+  const pins = {
+    old_pin: '1357',
+    new_pin: '2468',
+    confirm_pin: '2468',
+  };
+
+  function bearer() {
+    process.env.JWT_SECRET = TEST_SECRET;
+    return createSessionToken('7', '9', TEST_SECRET);
+  }
+
+  it('changes the PIN only for the verified bearer token', async () => {
+    const token = bearer();
+    const clientHash = 'a'.repeat(64);
+    const { app, calls } = appWith(async (text) => {
+      if (text.includes('fn_update_user_pin')) {
+        return {
+          rows: [{
+            response: {
+              status: 'SUCCESS',
+              code: 200,
+              message: 'PIN updated',
+              data: { user_id: '7' },
+            },
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const response = await request(app)
+      .post('/api/auth/change-pin')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        ...pins,
+        user_id: '99',
+        logged_in_user_id: '99',
+        role: 'ROLE_ADMIN',
+        jwt_token_hash: clientHash,
+      });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.user_id, '7');
+    assert.equal(JSON.stringify(response.body).includes(pins.old_pin), false);
+    assert.equal(JSON.stringify(response.body).includes(pins.new_pin), false);
+
+    const sent = JSON.parse(calls.find((call) => call.text.includes('fn_update_user_pin')).params[0]);
+    assert.equal(sent.jwt_token_hash, hashSessionToken(token));
+    assert.notEqual(sent.jwt_token_hash, clientHash);
+    assert.equal(Object.hasOwn(sent, 'user_id'), false);
+    assert.equal(Object.hasOwn(sent, 'logged_in_user_id'), false);
+    assert.equal(Object.hasOwn(sent, 'role'), false);
+
+    const audit = JSON.stringify(calls.find((call) => call.text.includes('log_api_execution')).params);
+    assert.equal(audit.includes(pins.old_pin), false);
+    assert.equal(audit.includes(pins.new_pin), false);
+    assert.equal(audit.includes(token), false);
+    assert.equal(audit.includes(clientHash), false);
+  });
+
+  it('returns the database rejection for a wrong current PIN', async () => {
+    const token = bearer();
+    const { app } = appWith(async (text) => {
+      if (text.includes('fn_update_user_pin')) {
+        return {
+          rows: [{
+            response: {
+              status: 'ERROR',
+              code: 401,
+              message: 'The current PIN is incorrect',
+              data: null,
+            },
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const response = await request(app)
+      .post('/api/auth/change-pin')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ...pins, old_pin: '9999' });
+
+    assert.equal(response.status, 401);
+    assert.equal(response.body.message, 'The current PIN is incorrect');
+    assert.equal(response.body.data, null);
+  });
+
+  it('rejects a confirmation mismatch before calling the database', async () => {
+    const token = bearer();
+    const { app, calls } = appWith(async () => ({ rows: [] }));
+    const response = await request(app)
+      .post('/api/auth/change-pin')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ...pins, confirm_pin: '2469' });
+
+    assert.equal(response.status, 400);
+    assert.equal(response.body.message, 'PIN entries do not match');
+    assert.equal(calls.some((call) => call.text.includes('fn_update_user_pin')), false);
+  });
+
+  it('rejects an invalid PIN before calling the database', async () => {
+    const token = bearer();
+    const { app, calls } = appWith(async () => ({ rows: [] }));
+    const response = await request(app)
+      .post('/api/auth/change-pin')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ...pins, new_pin: '12' });
+
+    assert.equal(response.status, 400);
+    assert.equal(response.body.message, 'PIN must be 4 digits');
+    assert.equal(calls.some((call) => call.text.includes('fn_update_user_pin')), false);
+  });
+
+  it('rejects an unauthenticated request before calling the database', async () => {
+    process.env.JWT_SECRET = TEST_SECRET;
+    const { app, calls } = appWith(async () => ({ rows: [] }));
+    const missing = await request(app).post('/api/auth/change-pin').send(pins);
+    const forged = await request(app)
+      .post('/api/auth/change-pin')
+      .set('Authorization', `Bearer ${createSessionToken('7', '9', 'another-secret-at-least-32-characters')}`)
+      .send({ ...pins, jwt_token_hash: 'b'.repeat(64), user_id: '99' });
+
+    assert.equal(missing.status, 401);
+    assert.equal(missing.body.message, 'Authentication is required');
+    assert.equal(forged.status, 401);
+    assert.equal(calls.some((call) => call.text.includes('fn_update_user_pin')), false);
   });
 });
