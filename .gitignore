@@ -6,3 +6,7 @@ npm-debug.log*
 *.log
 coverage/
 .DS_Store
+
+# Runtime KYC uploads (keep folder via .gitkeep only)
+media/kyc/*
+!media/kyc/.gitkeep
