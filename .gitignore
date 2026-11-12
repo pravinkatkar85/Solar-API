@@ -10,3 +10,7 @@ coverage/
 # Runtime KYC uploads (keep folder via .gitkeep only)
 media/kyc/*
 !media/kyc/.gitkeep
+
+# Runtime job media uploads (keep folder via .gitkeep only)
+media/jobs/*
+!media/jobs/.gitkeep

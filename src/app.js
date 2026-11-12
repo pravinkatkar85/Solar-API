@@ -11,6 +11,17 @@ import { createServiceRequestRouter } from './routes/serviceRequests.js';
 import { createAccountRouter } from './routes/account.js';
 import { createNotificationRouter } from './routes/notifications.js';
 import { createKycRouter } from './routes/kyc.js';
+import { createAdminCustomersRouter } from './routes/adminCustomers.js';
+import { createTechniciansRouter } from './routes/technicians.js';
+import { createJobsRouter } from './routes/jobs.js';
+import {
+  createAdminPaymentsRouter,
+  createPaymentsRouter,
+} from './routes/payments.js';
+import {
+  createAdminInvoicesRouter,
+  createInvoicesRouter,
+} from './routes/invoices.js';
 import { createDropdownRouter } from './routes/dropdowns.js';
 import { createHealthRouter } from './routes/health.js';
 
@@ -40,6 +51,16 @@ export function createApp({ pool, query, checkDatabaseConnection } = {}) {
       { index: false, dotfiles: 'deny' },
     ),
   );
+  app.use(
+    '/media/jobs',
+    express.static(
+      path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        '../media/jobs',
+      ),
+      { index: false, dotfiles: 'deny' },
+    ),
+  );
 
   app.use('/health', createHealthRouter({ pool, checkDatabaseConnection }));
 
@@ -51,6 +72,13 @@ export function createApp({ pool, query, checkDatabaseConnection } = {}) {
   app.use('/api/service-coverage', createCoverageRouter({ query: databaseQuery }));
   app.use('/api/service-requests', createServiceRequestRouter({ query: databaseQuery }));
   app.use('/api/kyc', createKycRouter({ query: databaseQuery }));
+  app.use('/api/admin/customers', createAdminCustomersRouter({ query: databaseQuery }));
+  app.use('/api/admin/technicians', createTechniciansRouter({ query: databaseQuery }));
+  app.use('/api/technician/jobs', createJobsRouter({ query: databaseQuery }));
+  app.use('/api/payments', createPaymentsRouter({ query: databaseQuery }));
+  app.use('/api/admin/payments', createAdminPaymentsRouter({ query: databaseQuery }));
+  app.use('/api/invoices', createInvoicesRouter({ query: databaseQuery }));
+  app.use('/api/admin/invoices', createAdminInvoicesRouter({ query: databaseQuery }));
   app.use('/api/notifications', createNotificationRouter({ query: databaseQuery }));
   app.use('/api/account', createAccountRouter({ query: databaseQuery }));
 
